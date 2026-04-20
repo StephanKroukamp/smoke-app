@@ -1,0 +1,113 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isUser(uid) {
+      return isSignedIn() && request.auth.uid == uid;
+    }
+
+    function isMemberOfGroup(groupId) {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/groups/$(groupId))
+        && request.auth.uid in get(/databases/$(database)/documents/groups/$(groupId)).data.memberUids;
+    }
+
+    // Only these verified email addresses may create new groups. Change here to update.
+    function canCreateGroup() {
+      return isSignedIn()
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['stephan.kroukamp@gmail.com'];
+    }
+
+    match /users/{uid} {
+      allow read: if isSignedIn();
+      allow create, update: if isUser(uid);
+      allow delete: if false;
+    }
+
+    match /groups/{groupId} {
+      allow read: if isSignedIn();
+
+      allow create: if canCreateGroup()
+        && request.resource.data.ownerUid == request.auth.uid
+        && request.resource.data.memberUids == [request.auth.uid];
+
+      allow update: if isSignedIn() && (
+        // Owner may update anything.
+        resource.data.ownerUid == request.auth.uid
+        // Non-owner: may only append own uid to memberUids (invite-join flow). No other field may change.
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+          && request.auth.uid in request.resource.data.memberUids
+          && !(request.auth.uid in resource.data.memberUids)
+          && request.resource.data.memberUids.size() == resource.data.memberUids.size() + 1
+        )
+        // Non-owner: may remove own uid from memberUids (leave-group flow). Owner cannot leave
+        // this way — they must delete the group, which is covered by the owner branch above.
+        || (
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberUids'])
+          && request.auth.uid in resource.data.memberUids
+          && !(request.auth.uid in request.resource.data.memberUids)
+          && request.resource.data.memberUids.size() == resource.data.memberUids.size() - 1
+          && resource.data.ownerUid != request.auth.uid
+        )
+      );
+
+      allow delete: if resource.data.ownerUid == request.auth.uid;
+
+      match /invites/{code} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn()
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUid == request.auth.uid;
+        allow update: if isSignedIn() && (
+          get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUid == request.auth.uid
+          || (
+            // Joiner may only increment `uses`.
+            resource != null
+            && request.resource.data.diff(resource.data).changedKeys().hasOnly(['uses'])
+            && request.resource.data.uses == resource.data.uses + 1
+          )
+        );
+        allow delete: if isSignedIn()
+          && get(/databases/$(database)/documents/groups/$(groupId)).data.ownerUid == request.auth.uid;
+      }
+    }
+
+    match /smokes/{smokeId} {
+      allow read: if isSignedIn() && isMemberOfGroup(resource.data.groupId);
+
+      allow create: if isSignedIn()
+        && request.resource.data.initiatorUid == request.auth.uid
+        && isMemberOfGroup(request.resource.data.groupId)
+        && request.resource.data.status == 'open'
+        && request.resource.data.responses is map
+        && request.resource.data.responses.size() == 0
+        && request.resource.data.durationMinutes is number
+        && request.resource.data.durationMinutes >= 1
+        && request.resource.data.durationMinutes <= 120;
+
+      allow update: if isSignedIn() && isMemberOfGroup(resource.data.groupId) && (
+        // Initiator OR group owner may close the smoke (status: open → closed).
+        (
+          (
+            resource.data.initiatorUid == request.auth.uid
+            || get(/databases/$(database)/documents/groups/$(resource.data.groupId)).data.ownerUid == request.auth.uid
+          )
+          && request.resource.data.diff(resource.data).changedKeys().hasOnly(['status'])
+          && request.resource.data.status == 'closed'
+        )
+        // Any member may record their own response only.
+        || (
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['responses'])
+          && request.resource.data.responses.diff(resource.data.responses).affectedKeys().hasOnly([request.auth.uid])
+        )
+      );
+
+      allow delete: if isSignedIn() && resource.data.initiatorUid == request.auth.uid;
+    }
+  }
+}

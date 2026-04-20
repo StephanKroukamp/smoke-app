@@ -1,0 +1,11 @@
+name = "smoke-push"
+main = "src/index.ts"
+compatibility_date = "2024-11-01"
+
+# Set with: wrangler secret put FIREBASE_PROJECT_ID
+#           wrangler secret put GCP_SERVICE_ACCOUNT_JSON
+#           wrangler secret put ALLOWED_ORIGIN
+# (ALLOWED_ORIGIN is e.g. https://your-project.web.app — used for CORS.)
+
+[vars]
+# Public vars can go here. Secrets must use `wrangler secret put`.

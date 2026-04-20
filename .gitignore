@@ -1,0 +1,17 @@
+node_modules
+dist
+dist-ssr
+.env
+.env.local
+.env.*.local
+*.local
+.DS_Store
+.vscode/*
+!.vscode/extensions.json
+.idea
+*.log
+.firebase/
+*.tsbuildinfo
+worker/.wrangler
+worker/node_modules
+worker/dist
