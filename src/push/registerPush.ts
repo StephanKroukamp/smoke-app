@@ -1,6 +1,7 @@
 import { deleteToken, getToken } from "firebase/messaging";
 import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
-import { db, getMessagingIfSupported, VAPID_KEY } from "../firebase";
+import { deleteInstallations, getInstallations } from "firebase/installations";
+import { app, db, getMessagingIfSupported, VAPID_KEY } from "../firebase";
 
 function platformHint(): string {
   const ua = navigator.userAgent;
@@ -21,11 +22,16 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
 
   const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
 
-  // getToken() can fail with 401 "missing authentication credential" when a
-  // freshly created Firebase installation hasn't propagated server-side yet.
-  // Retry a few times with backoff — the second call almost always succeeds.
+  // FCM register can 401 with "missing authentication credential" when the
+  // Firebase installation attached to this device is broken server-side
+  // (e.g. never fully propagated, or orphaned from a previous project state).
+  // Plain getToken() retries don't help — the SDK keeps reusing the same FID.
+  // Force a fresh installation between attempts by calling deleteInstallations,
+  // which wipes the FID locally and server-side. The next getToken creates a
+  // brand new installation.
   let token: string | null = null;
   let lastErr: unknown = null;
+  const installations = getInstallations(app);
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
       token = await getToken(messaging, {
@@ -36,7 +42,17 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
     } catch (e) {
       lastErr = e;
     }
-    await new Promise((r) => setTimeout(r, 500 + attempt * 500));
+    try {
+      await deleteInstallations(installations);
+    } catch {
+      /* ignore — nothing to delete on first attempt */
+    }
+    try {
+      await deleteToken(messaging);
+    } catch {
+      /* ignore */
+    }
+    await new Promise((r) => setTimeout(r, 300 + attempt * 200));
   }
   if (!token) {
     if (lastErr) throw lastErr;
