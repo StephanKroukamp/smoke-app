@@ -92,10 +92,12 @@ export function NotificationGate() {
         );
       } else if (result.failed > 0) {
         setTestStatus(
-          `❌ FCM rejected ${result.failed} token${result.failed === 1 ? "" : "s"}. ${result.errors[0] ?? ""} Try Reset below to get a fresh token.`
+          `❌ FCM rejected ${result.failed} token${result.failed === 1 ? "" : "s"} (of ${result.tokenCount}). Error: ${result.errors[0] ?? "(none)"} — tap Reset to regenerate.`
         );
       } else {
-        setTestStatus(`❌ ${result.message ?? "Push failed"}`);
+        setTestStatus(
+          `❌ ${result.message ?? "Push failed"} · sent=${result.sent} failed=${result.failed} tokens=${result.tokenCount}`
+        );
       }
     } catch (e) {
       setTestStatus(`❌ ${e instanceof Error ? e.message : "Test failed"}`);

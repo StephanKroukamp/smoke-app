@@ -8,15 +8,22 @@ async function post(path: string, body: unknown): Promise<Response | null> {
   const user = auth.currentUser;
   if (!user) return null;
   const token = await user.getIdToken();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 20000);
   try {
-    return await fetch(`${PUSH_WORKER_URL}${path}`, {
+    const res = await fetch(`${PUSH_WORKER_URL}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
+    console.log(`[push-worker] ${path} → HTTP ${res.status}`);
+    return res;
   } catch (e) {
     console.error("Push worker call failed", e);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -37,7 +44,7 @@ export async function sendSelfTestPush(): Promise<{
   message?: string;
 }> {
   const res = await post("/push-test", {});
-  if (!res) return { ok: false, tokenCount: 0, sent: 0, failed: 0, errors: [], message: "Worker unreachable" };
+  if (!res) return { ok: false, tokenCount: 0, sent: 0, failed: 0, errors: [], message: "Worker unreachable (timeout or network error)" };
   const body = (await res.json().catch(() => null)) as {
     tokenCount?: number;
     sent?: number;
@@ -45,6 +52,7 @@ export async function sendSelfTestPush(): Promise<{
     errors?: string[];
     error?: string;
   } | null;
+  console.log(`[push-worker] /push-test response:`, body);
   if (!res.ok) {
     return {
       ok: false,
