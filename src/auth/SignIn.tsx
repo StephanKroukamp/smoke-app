@@ -1,4 +1,10 @@
-import { signInWithPopup } from "firebase/auth";
+import { Capacitor } from "@capacitor/core";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
+import {
+  GoogleAuthProvider,
+  signInWithCredential,
+  signInWithPopup,
+} from "firebase/auth";
 import { useState } from "react";
 import { auth, googleProvider } from "../firebase";
 
@@ -10,7 +16,17 @@ export function SignIn() {
     setBusy(true);
     setError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      if (Capacitor.isNativePlatform()) {
+        // Native Google Sign-In via Play Services. Popups/redirects don't
+        // work inside a Capacitor WebView — that's the "missing initial
+        // state" error you see if you try signInWithPopup in the APK.
+        const result = await FirebaseAuthentication.signInWithGoogle();
+        const idToken = result.credential?.idToken;
+        if (!idToken) throw new Error("Google did not return an ID token");
+        await signInWithCredential(auth, GoogleAuthProvider.credential(idToken));
+      } else {
+        await signInWithPopup(auth, googleProvider);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Sign-in failed");
     } finally {

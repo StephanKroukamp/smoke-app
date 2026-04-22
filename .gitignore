@@ -19,3 +19,6 @@ worker/dist
 android/
 ios/
 dist-apk/
+# Keep android-keystore/ tracked — debug keystore is shared by design so the
+# SHA-1 registered in Firebase stays stable across CI builds.
+!android-keystore/

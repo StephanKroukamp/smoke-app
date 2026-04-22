@@ -24,6 +24,11 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      - name: Install shared debug keystore
+        run: |
+          mkdir -p ~/.android
+          cp android-keystore/debug-shared.keystore ~/.android/debug.keystore
+
       - name: Install dependencies
         run: npm ci
 
