@@ -1,7 +1,7 @@
 import { verifyFirebaseIdToken } from "./verifyFirebaseToken";
 import { getFcmAccessToken } from "./gcpAccessToken";
-import { firestoreGet, setServiceAccountJsonForFirestore } from "./firestore";
-import { sendFcm } from "./fcm";
+import { deleteUserFcmTokens, firestoreGet, setServiceAccountJsonForFirestore } from "./firestore";
+import { sendFcm, type SendFcmResult } from "./fcm";
 
 export interface Env {
   FIREBASE_PROJECT_ID: string;
@@ -77,26 +77,21 @@ async function handlePushSmoke(req: Request, env: Env): Promise<Response> {
   const accessToken = await getFcmAccessToken(env.GCP_SERVICE_ACCOUNT_JSON);
 
   const recipients = group.memberUids.filter((uid) => uid !== smoke.initiatorUid);
-  const tokens: string[] = [];
+  const targets: { uid: string; token: string }[] = [];
   for (const uid of recipients) {
     const user = await firestoreGet<UserDoc>(env.FIREBASE_PROJECT_ID, `users/${uid}`);
-    if (user?.fcmTokens) tokens.push(...Object.keys(user.fcmTokens));
+    if (user?.fcmTokens) {
+      for (const token of Object.keys(user.fcmTokens)) targets.push({ uid, token });
+    }
   }
 
   const title = `🚬 ${initiatorName} raised the flag`;
   const body = `${group.name} · ${smoke.durationMinutes} min to respond`;
 
-  const results = await Promise.allSettled(
-    tokens.map((t) =>
-      sendFcm(env.FIREBASE_PROJECT_ID, accessToken, t, title, body, {
-        smokeId,
-        groupId: smoke.groupId,
-      })
-    )
-  );
-
-  const sent = results.filter((r) => r.status === "fulfilled").length;
-  const failed = results.length - sent;
+  const { sent, failed } = await sendAndCleanup(env, accessToken, targets, title, body, {
+    smokeId,
+    groupId: smoke.groupId,
+  });
   return json({ sent, failed }, {}, env);
 }
 
@@ -130,16 +125,15 @@ async function handlePushResponse(req: Request, env: Env): Promise<Response> {
   const title = status === "accepted" ? `✅ ${responderName} accepted` : `❌ ${responderName} declined`;
   const body = "";
 
-  const tokens = Object.keys(initiator.fcmTokens);
-  const results = await Promise.allSettled(
-    tokens.map((t) =>
-      sendFcm(env.FIREBASE_PROJECT_ID, accessToken, t, title, body, {
-        smokeId,
-        groupId: smoke.groupId,
-      })
-    )
-  );
-  return json({ sent: results.filter((r) => r.status === "fulfilled").length }, {}, env);
+  const targets = Object.keys(initiator.fcmTokens).map((token) => ({
+    uid: smoke.initiatorUid,
+    token,
+  }));
+  const { sent } = await sendAndCleanup(env, accessToken, targets, title, body, {
+    smokeId,
+    groupId: smoke.groupId,
+  });
+  return json({ sent }, {}, env);
 }
 
 async function handlePushTest(req: Request, env: Env): Promise<Response> {
@@ -156,23 +150,69 @@ async function handlePushTest(req: Request, env: Env): Promise<Response> {
   }
 
   const accessToken = await getFcmAccessToken(env.GCP_SERVICE_ACCOUNT_JSON);
-  const results = await Promise.allSettled(
-    tokens.map((t) =>
-      sendFcm(
-        env.FIREBASE_PROJECT_ID,
-        accessToken,
-        t,
-        "🧪 Smoke Break test",
-        "If you see this, push notifications are working on this device.",
-        {}
-      )
+  const targets = tokens.map((token) => ({ uid: claims.sub, token }));
+  const { sent, failed, errors } = await sendAndCleanup(
+    env,
+    accessToken,
+    targets,
+    "🧪 Smoke Break test",
+    "If you see this, push notifications are working on this device.",
+    {}
+  );
+  return json({ tokenCount: tokens.length, sent, failed, errors }, {}, env);
+}
+
+/**
+ * Send FCM messages to all targets in parallel. After sends complete, delete tokens
+ * that FCM reported as dead from Firestore so we don't target them again.
+ */
+async function sendAndCleanup(
+  env: Env,
+  accessToken: string,
+  targets: { uid: string; token: string }[],
+  title: string,
+  body: string,
+  data: Record<string, string>
+): Promise<{ sent: number; failed: number; errors: string[] }> {
+  const results = await Promise.all(
+    targets.map((t) =>
+      sendFcm(env.FIREBASE_PROJECT_ID, accessToken, t.token, title, body, data)
+        .then<{ target: typeof t; res: SendFcmResult }>((res) => ({ target: t, res }))
+        .catch((e) => ({
+          target: t,
+          res: {
+            ok: false,
+            dead: false,
+            status: 0,
+            body: e instanceof Error ? e.message : String(e),
+          } as SendFcmResult,
+        }))
     )
   );
-  const sent = results.filter((r) => r.status === "fulfilled").length;
-  const errors = results
-    .filter((r) => r.status === "rejected")
-    .map((r) => (r as PromiseRejectedResult).reason?.message ?? String((r as PromiseRejectedResult).reason));
-  return json({ tokenCount: tokens.length, sent, failed: tokens.length - sent, errors }, {}, env);
+
+  let sent = 0;
+  const errors: string[] = [];
+  const deadByUid = new Map<string, string[]>();
+  for (const { target, res } of results) {
+    if (res.ok) {
+      sent++;
+      continue;
+    }
+    errors.push(`${res.status}: ${res.body}`);
+    if (res.dead) {
+      const arr = deadByUid.get(target.uid) ?? [];
+      arr.push(target.token);
+      deadByUid.set(target.uid, arr);
+    }
+  }
+
+  await Promise.allSettled(
+    Array.from(deadByUid.entries()).map(([uid, deadTokens]) =>
+      deleteUserFcmTokens(env.FIREBASE_PROJECT_ID, uid, deadTokens)
+    )
+  );
+
+  return { sent, failed: targets.length - sent, errors };
 }
 
 export default {

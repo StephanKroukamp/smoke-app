@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { countStoredTokens, registerPushForUser, resetPushForUser } from "./registerPush";
 import { sendSelfTestPush } from "../smokes/callPushWorker";
@@ -49,6 +49,33 @@ export function NotificationGate() {
   useEffect(() => {
     if (!user || state !== "granted") return;
     countStoredTokens(user.uid).then(setTokenCount).catch(() => setTokenCount(null));
+  }, [user, state]);
+
+  // Re-fetch the FCM token whenever the app becomes visible, so a token that
+  // was silently invalidated (SW replaced, subscription expired) is replaced
+  // before the next push is sent. Throttled so frequent alt-tabs don't spam
+  // Firestore — getToken() itself is cheap (IndexedDB cache) but the write isn't.
+  const lastRefreshRef = useRef<number>(0);
+  useEffect(() => {
+    if (!user || state !== "granted") return;
+    const refresh = async () => {
+      if (document.visibilityState !== "visible") return;
+      const now = Date.now();
+      if (now - lastRefreshRef.current < 60 * 60 * 1000) return;
+      lastRefreshRef.current = now;
+      try {
+        await registerPushForUser(user.uid);
+      } catch (e) {
+        console.warn("Visibility token refresh failed:", e);
+      }
+    };
+    refresh();
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
   }, [user, state]);
 
   async function enable() {

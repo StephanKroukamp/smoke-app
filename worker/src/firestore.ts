@@ -141,3 +141,34 @@ export async function firestoreGet<T>(projectId: string, path: string): Promise<
   const doc = (await res.json()) as { fields?: Record<string, unknown> };
   return decodeDocument<T>(doc);
 }
+
+/**
+ * Delete specific map keys under `users/{uid}.fcmTokens`. Uses Firestore REST
+ * PATCH with an updateMask targeting `fcmTokens.<tokenKey>`; omitting those
+ * fields from the body is how Firestore removes them.
+ *
+ * Firestore map-key field paths with special characters must be backtick-quoted.
+ * FCM tokens contain `:`, `/`, `-`, `_` — `:` and `/` trigger the quote rule.
+ */
+export async function deleteUserFcmTokens(
+  projectId: string,
+  uid: string,
+  tokens: string[]
+): Promise<void> {
+  if (tokens.length === 0) return;
+  const accessToken = await getDatastoreAccessToken();
+  const params = new URLSearchParams();
+  for (const t of tokens) params.append("updateMask.fieldPaths", `fcmTokens.\`${t}\``);
+  const url = `https://firestore.googleapis.com/v1/projects/${projectId}/databases/(default)/documents/users/${uid}?${params.toString()}`;
+  const res = await fetch(url, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ fields: {} }),
+  });
+  if (!res.ok) {
+    throw new Error(`Firestore token cleanup failed: ${res.status} ${await res.text()}`);
+  }
+}

@@ -15,3 +15,4 @@ dist-ssr
 worker/.wrangler
 worker/node_modules
 worker/dist
+.serena/
