@@ -91,6 +91,37 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
  * device is failing to receive pushes — most commonly because of a stale token
  * from a previous install or a prior desktop session.
  */
+/**
+ * Delete the Firebase SDK's IndexedDB caches. Firebase Installations stores a
+ * persistent FID (installation ID) and its auth token in IndexedDB; if those
+ * go stale (project rotated, wrong app ID cached, old write half-persisted)
+ * the SDK silently fails to refresh them and later FCM calls go out with no
+ * auth header → server returns "missing authentication credential".
+ *
+ * We can't use indexedDB.databases() on Firefox/Safari, so we delete the
+ * known Firebase DB names directly.
+ */
+async function nukeFirebaseIndexedDb(): Promise<void> {
+  // Intentionally NOT deleting `firebaseLocalStorageDb` — that holds Firebase
+  // Auth state, and wiping it would sign the user out.
+  const names = [
+    "firebase-installations-database",
+    "firebase-messaging-database",
+    "firebase-heartbeat-database",
+  ];
+  await Promise.all(
+    names.map(
+      (name) =>
+        new Promise<void>((resolve) => {
+          const req = indexedDB.deleteDatabase(name);
+          req.onsuccess = () => resolve();
+          req.onerror = () => resolve();
+          req.onblocked = () => resolve();
+        })
+    )
+  );
+}
+
 export async function resetPushForUser(uid: string): Promise<string | null> {
   const messaging = await getMessagingIfSupported();
   if (!messaging) throw new Error("Messaging not supported on this browser");
@@ -120,6 +151,7 @@ export async function resetPushForUser(uid: string): Promise<string | null> {
   } catch {
     /* ignore */
   }
+  await nukeFirebaseIndexedDb();
   try {
     await updateDoc(doc(db, "users", uid), { fcmTokens: deleteField() });
   } catch {
