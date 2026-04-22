@@ -1,7 +1,7 @@
 import { deleteToken, getToken } from "firebase/messaging";
 import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { deleteInstallations, getInstallations } from "firebase/installations";
-import { app, db, getMessagingIfSupported, VAPID_KEY } from "../firebase";
+import { app, db, getMessagingIfSupported } from "../firebase";
 
 function platformHint(): string {
   const ua = navigator.userAgent;
@@ -22,6 +22,21 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
 
   const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
 
+  // Force any existing PushSubscription to be thrown out. The endpoint URL is
+  // cryptographically tied to the applicationServerKey used when subscribe()
+  // was first called; if that was a now-incorrect VAPID key, FCM register will
+  // 401 forever with "missing authentication credential" — silently. The
+  // Firebase SDK doesn't reliably unsubscribe+resubscribe when the key changes,
+  // so we do it ourselves.
+  try {
+    if (registration.active || registration.waiting || registration.installing) {
+      const existing = await registration.pushManager.getSubscription();
+      if (existing) await existing.unsubscribe();
+    }
+  } catch {
+    /* ignore */
+  }
+
   // FCM register can 401 with "missing authentication credential" when the
   // Firebase installation attached to this device is broken server-side
   // (e.g. never fully propagated, or orphaned from a previous project state).
@@ -34,8 +49,14 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
   const installations = getInstallations(app);
   for (let attempt = 0; attempt < 5; attempt++) {
     try {
+      // Intentionally NOT passing a custom vapidKey. Firebase's SDK only
+      // sends the applicationPubKey field to FCM register when a custom
+      // VAPID is set, and that field triggers FCM's server-side auth check
+      // which has been returning 401 "missing authentication credential"
+      // for this project. Using the SDK's built-in default VAPID skips that
+      // field entirely. Server-side sending still works because the Worker
+      // uses a service account (FCM HTTP v1) — VAPID key is irrelevant there.
       token = await getToken(messaging, {
-        vapidKey: VAPID_KEY,
         serviceWorkerRegistration: registration,
       });
       if (token) break;
