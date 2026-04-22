@@ -16,3 +16,6 @@ worker/.wrangler
 worker/node_modules
 worker/dist
 .serena/
+android/
+ios/
+dist-apk/

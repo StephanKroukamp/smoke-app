@@ -1,7 +1,9 @@
+import { Capacitor } from "@capacitor/core";
 import { deleteToken, getToken } from "firebase/messaging";
 import { deleteField, doc, getDoc, serverTimestamp, setDoc, updateDoc } from "firebase/firestore";
 import { deleteInstallations, getInstallations } from "firebase/installations";
 import { app, db, getMessagingIfSupported } from "../firebase";
+import { registerPushNative } from "./registerPushNative";
 
 function platformHint(): string {
   const ua = navigator.userAgent;
@@ -11,6 +13,13 @@ function platformHint(): string {
 }
 
 export async function registerPushForUser(uid: string): Promise<string | null> {
+  // Inside the Android APK (Capacitor) we use native FCM via the push plugin —
+  // that's the whole reason for shipping a native wrapper. Web push code below
+  // stays the same and runs in the browser / PWA.
+  if (Capacitor.isNativePlatform()) {
+    return registerPushNative(uid);
+  }
+
   const messaging = await getMessagingIfSupported();
   if (!messaging) return null;
 

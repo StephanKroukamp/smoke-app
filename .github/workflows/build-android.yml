@@ -1,0 +1,69 @@
+name: Build Android APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build web app
+        env:
+          VITE_FIREBASE_API_KEY: ${{ secrets.VITE_FIREBASE_API_KEY }}
+          VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.VITE_FIREBASE_AUTH_DOMAIN }}
+          VITE_FIREBASE_PROJECT_ID: ${{ secrets.VITE_FIREBASE_PROJECT_ID }}
+          VITE_FIREBASE_APP_ID: ${{ secrets.VITE_FIREBASE_APP_ID }}
+          VITE_FIREBASE_MESSAGING_SENDER_ID: ${{ secrets.VITE_FIREBASE_MESSAGING_SENDER_ID }}
+          VITE_PUSH_WORKER_URL: ${{ secrets.VITE_PUSH_WORKER_URL }}
+        run: npm run build
+
+      - name: Add Android platform
+        run: npx cap add android
+
+      - name: Wire Firebase Cloud Messaging into Android build
+        run: node scripts/apply-android-fcm.mjs
+
+      - name: Write google-services.json from secret
+        run: |
+          if [ -z "${GOOGLE_SERVICES_JSON}" ]; then
+            echo "::error::GOOGLE_SERVICES_JSON secret is not set. Add it in Repo Settings → Secrets and variables → Actions. See README for where to download it."
+            exit 1
+          fi
+          printf '%s' "${GOOGLE_SERVICES_JSON}" > android/app/google-services.json
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+
+      - name: Sync Capacitor
+        run: npx cap sync android
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug --no-daemon
+
+      - name: Rename APK
+        run: |
+          mkdir -p dist-apk
+          cp android/app/build/outputs/apk/debug/app-debug.apk "dist-apk/smoke-break-$(date +%Y%m%d-%H%M).apk"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smoke-break-android-apk
+          path: dist-apk/*.apk
+          retention-days: 30
