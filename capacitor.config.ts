@@ -3,17 +3,9 @@ import type { CapacitorConfig } from "@capacitor/cli";
 const config: CapacitorConfig = {
   appId: "app.smokesignal.smokebreak",
   appName: "Smoke Break",
+  // APK bundles the built web app (dist/) inside itself. No reliance on
+  // Firebase Hosting — the native app is fully self-contained.
   webDir: "dist",
-  // Load the hosted web app directly so Capacitor is just a thin native shell.
-  // This way the web app updates take effect immediately without rebuilding
-  // the APK, and the native layer only exists to provide native push.
-  server: {
-    url: "https://smokesignal-c2668.web.app",
-    cleartext: false,
-  },
-  android: {
-    allowMixedContent: false,
-  },
   plugins: {
     PushNotifications: {
       presentationOptions: ["badge", "sound", "alert"],
