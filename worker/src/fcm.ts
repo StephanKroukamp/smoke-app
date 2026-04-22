@@ -27,7 +27,18 @@ export async function sendFcm(
       token,
       data: payload,
       webpush: {
+        // FCM auto-displays this on the device, so notifications arrive even
+        // when the service worker is evicted / asleep. We still send `data`
+        // so our SW's onBackgroundMessage can enrich when it runs.
+        notification: {
+          title,
+          body,
+          icon: "/icons/icon-192.png",
+          badge: "/icons/icon-192.png",
+          tag: data.smokeId || "smoke",
+        },
         fcm_options: { link: data.smokeId ? `/smoke/${data.smokeId}` : "/" },
+        headers: { Urgency: "high", TTL: "86400" },
       },
     },
   };

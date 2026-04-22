@@ -16,24 +16,11 @@ firebase.initializeApp({
   messagingSenderId: "__FIREBASE_MESSAGING_SENDER_ID__",
 });
 
-const messaging = firebase.messaging();
-
-// Server sends data-only messages (see worker/src/fcm.ts) so FCM doesn't auto-render a
-// second notification alongside ours.
-messaging.onBackgroundMessage((payload) => {
-  const data = payload.data || {};
-  const title = data.title || payload.notification?.title || "Smoke Break";
-  const body = data.body || payload.notification?.body || "";
-  const options = {
-    body,
-    icon: "/icons/icon-192.png",
-    badge: "/icons/icon-192.png",
-    data,
-    tag: data.smokeId || "smoke",
-    renotify: true,
-  };
-  self.registration.showNotification(title, options);
-});
+// Server sends `webpush.notification` in the FCM message so the browser
+// auto-displays notifications even when the SW is evicted. We intentionally
+// do NOT call showNotification ourselves anymore — duplicating it would
+// produce two notifications per push.
+firebase.messaging();
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
