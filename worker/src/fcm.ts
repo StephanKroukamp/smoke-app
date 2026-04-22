@@ -1,7 +1,8 @@
-export type SendFcmResult =
-  | { ok: true }
-  | { ok: false; dead: true; status: number; body: string }
-  | { ok: false; dead: false; status: number; body: string };
+/**
+ * Send a single FCM message via the HTTP v1 API.
+ * Non-2xx responses bubble up as errors. Token cleanup (on 404 UNREGISTERED) is not
+ * implemented here — could be added later by deleting the token field from the user doc.
+ */
 
 export async function sendFcm(
   projectId: string,
@@ -10,7 +11,7 @@ export async function sendFcm(
   title: string,
   body: string,
   data: Record<string, string>
-): Promise<SendFcmResult> {
+): Promise<void> {
   const url = `https://fcm.googleapis.com/v1/projects/${projectId}/messages:send`;
 
   // Data-only message: the service worker (firebase-messaging-sw.js) renders the notification.
@@ -40,14 +41,7 @@ export async function sendFcm(
     body: JSON.stringify(message),
   });
 
-  if (res.ok) return { ok: true };
-
-  const respBody = await res.text();
-  // https://firebase.google.com/docs/cloud-messaging/manage-tokens
-  // 404 UNREGISTERED → token was valid once, now dead. 400 INVALID_ARGUMENT with
-  // errorCode INVALID_ARGUMENT → malformed token; also not recoverable.
-  const dead =
-    res.status === 404 ||
-    /UNREGISTERED|INVALID_ARGUMENT|NOT_FOUND/i.test(respBody);
-  return { ok: false, dead, status: res.status, body: respBody };
+  if (!res.ok) {
+    throw new Error(`FCM send failed: ${res.status} ${await res.text()}`);
+  }
 }

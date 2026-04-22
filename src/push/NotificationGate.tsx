@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useAuth } from "../auth/AuthProvider";
 import { countStoredTokens, registerPushForUser, resetPushForUser } from "./registerPush";
 import { sendSelfTestPush } from "../smokes/callPushWorker";
@@ -19,7 +19,6 @@ export function NotificationGate() {
   const [busy, setBusy] = useState(false);
   const [tokenCount, setTokenCount] = useState<number | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
-  const [enableError, setEnableError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -39,13 +38,10 @@ export function NotificationGate() {
     (async () => {
       try {
         const token = await registerPushForUser(user.uid);
-        if (token) {
-          setState("granted");
-          setEnableError(null);
-        }
+        setState(token ? "granted" : "granted-no-token");
       } catch (e) {
-        // Background attempt — don't thrash UI. User can retry via button.
-        console.warn("Background token register failed:", e);
+        console.warn("Token register failed:", e);
+        setState("granted-no-token");
       }
     })();
   }, [user, state]);
@@ -55,38 +51,10 @@ export function NotificationGate() {
     countStoredTokens(user.uid).then(setTokenCount).catch(() => setTokenCount(null));
   }, [user, state]);
 
-  // Re-fetch the FCM token whenever the app becomes visible, so a token that
-  // was silently invalidated (SW replaced, subscription expired) is replaced
-  // before the next push is sent. Throttled so frequent alt-tabs don't spam
-  // Firestore — getToken() itself is cheap (IndexedDB cache) but the write isn't.
-  const lastRefreshRef = useRef<number>(0);
-  useEffect(() => {
-    if (!user || state !== "granted") return;
-    const refresh = async () => {
-      if (document.visibilityState !== "visible") return;
-      const now = Date.now();
-      if (now - lastRefreshRef.current < 60 * 60 * 1000) return;
-      lastRefreshRef.current = now;
-      try {
-        await registerPushForUser(user.uid);
-      } catch (e) {
-        console.warn("Visibility token refresh failed:", e);
-      }
-    };
-    refresh();
-    document.addEventListener("visibilitychange", refresh);
-    window.addEventListener("focus", refresh);
-    return () => {
-      document.removeEventListener("visibilitychange", refresh);
-      window.removeEventListener("focus", refresh);
-    };
-  }, [user, state]);
-
   async function enable() {
     if (!user || busy) return;
     setBusy(true);
     setTestStatus(null);
-    setEnableError(null);
     try {
       if (Notification.permission === "denied") {
         setState("denied");
@@ -101,34 +69,8 @@ export function NotificationGate() {
         setState("default");
         return;
       }
-      // First attempt — normal register. This handles stale subscriptions
-      // automatically via clearStaleSubscription().
-      try {
-        const token = await registerPushForUser(user.uid);
-        if (token) {
-          setState("granted");
-          return;
-        }
-      } catch (firstErr) {
-        console.warn("First register attempt failed, falling back to hard reset:", firstErr);
-        // Fall through to hard reset.
-        try {
-          const token = await resetPushForUser(user.uid);
-          if (token) {
-            setState("granted");
-            return;
-          }
-          throw new Error("Reset returned no token");
-        } catch (resetErr) {
-          const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
-          console.error("Reset also failed:", resetErr);
-          setEnableError(msg);
-          setState("granted-no-token");
-          return;
-        }
-      }
-      setEnableError("Unknown error — no token and no exception");
-      setState("granted-no-token");
+      const token = await registerPushForUser(user.uid);
+      setState(token ? "granted" : "granted-no-token");
     } finally {
       setBusy(false);
     }
@@ -234,7 +176,9 @@ export function NotificationGate() {
     return (
       <div
         className="card"
-        style={{ borderColor: "var(--accent)", background: "#2a1e10" }}
+        style={{ borderColor: "var(--accent)", background: "#2a1e10", cursor: "pointer" }}
+        onClick={enable}
+        role="button"
       >
         <h2 style={{ margin: 0 }}>🔔 Enable push notifications</h2>
         <p className="small" style={{ margin: "0.5rem 0" }}>
@@ -242,14 +186,6 @@ export function NotificationGate() {
             ? "Tap to allow notifications so you get pinged when someone raises the flag."
             : "Almost there — tap to finish enabling push notifications."}
         </p>
-        {enableError && (
-          <p
-            className="small"
-            style={{ margin: "0.5rem 0", color: "var(--danger)", wordBreak: "break-word" }}
-          >
-            ⚠️ {enableError}
-          </p>
-        )}
         <button className="primary" disabled={busy} onClick={enable}>
           {busy ? "Enabling..." : "Enable notifications"}
         </button>
