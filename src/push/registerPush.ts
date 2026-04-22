@@ -20,11 +20,28 @@ export async function registerPushForUser(uid: string): Promise<string | null> {
   }
 
   const registration = await navigator.serviceWorker.register("/firebase-messaging-sw.js");
-  const token = await getToken(messaging, {
-    vapidKey: VAPID_KEY,
-    serviceWorkerRegistration: registration,
-  });
-  if (!token) return null;
+
+  // getToken() can fail with 401 "missing authentication credential" when a
+  // freshly created Firebase installation hasn't propagated server-side yet.
+  // Retry a few times with backoff — the second call almost always succeeds.
+  let token: string | null = null;
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      token = await getToken(messaging, {
+        vapidKey: VAPID_KEY,
+        serviceWorkerRegistration: registration,
+      });
+      if (token) break;
+    } catch (e) {
+      lastErr = e;
+    }
+    await new Promise((r) => setTimeout(r, 500 + attempt * 500));
+  }
+  if (!token) {
+    if (lastErr) throw lastErr;
+    return null;
+  }
 
   await setDoc(
     doc(db, "users", uid),
