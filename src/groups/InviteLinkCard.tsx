@@ -27,13 +27,13 @@ export function InviteLinkCard({ groupId }: { groupId: string }) {
 
   async function copy() {
     if (!code) return;
-    const url = `${window.location.origin}/join/${groupId}/${code}`;
+    const url = `https://smokesignal-c2668.web.app/join/${groupId}/${code}`;
     await navigator.clipboard.writeText(url);
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
-  const url = code ? `${window.location.origin}/join/${groupId}/${code}` : null;
+  const url = code ? `https://smokesignal-c2668.web.app/join/${groupId}/${code}` : null;
 
   return (
     <div className="card stack">
