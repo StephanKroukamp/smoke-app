@@ -19,6 +19,7 @@ export function NotificationGate() {
   const [busy, setBusy] = useState(false);
   const [tokenCount, setTokenCount] = useState<number | null>(null);
   const [testStatus, setTestStatus] = useState<string | null>(null);
+  const [enableError, setEnableError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
@@ -38,10 +39,13 @@ export function NotificationGate() {
     (async () => {
       try {
         const token = await registerPushForUser(user.uid);
-        setState(token ? "granted" : "granted-no-token");
+        if (token) {
+          setState("granted");
+          setEnableError(null);
+        }
       } catch (e) {
-        console.warn("Token register failed:", e);
-        setState("granted-no-token");
+        // Background attempt — don't thrash UI. User can retry via button.
+        console.warn("Background token register failed:", e);
       }
     })();
   }, [user, state]);
@@ -82,6 +86,7 @@ export function NotificationGate() {
     if (!user || busy) return;
     setBusy(true);
     setTestStatus(null);
+    setEnableError(null);
     try {
       if (Notification.permission === "denied") {
         setState("denied");
@@ -96,8 +101,34 @@ export function NotificationGate() {
         setState("default");
         return;
       }
-      const token = await registerPushForUser(user.uid);
-      setState(token ? "granted" : "granted-no-token");
+      // First attempt — normal register. This handles stale subscriptions
+      // automatically via clearStaleSubscription().
+      try {
+        const token = await registerPushForUser(user.uid);
+        if (token) {
+          setState("granted");
+          return;
+        }
+      } catch (firstErr) {
+        console.warn("First register attempt failed, falling back to hard reset:", firstErr);
+        // Fall through to hard reset.
+        try {
+          const token = await resetPushForUser(user.uid);
+          if (token) {
+            setState("granted");
+            return;
+          }
+          throw new Error("Reset returned no token");
+        } catch (resetErr) {
+          const msg = resetErr instanceof Error ? resetErr.message : String(resetErr);
+          console.error("Reset also failed:", resetErr);
+          setEnableError(msg);
+          setState("granted-no-token");
+          return;
+        }
+      }
+      setEnableError("Unknown error — no token and no exception");
+      setState("granted-no-token");
     } finally {
       setBusy(false);
     }
@@ -203,9 +234,7 @@ export function NotificationGate() {
     return (
       <div
         className="card"
-        style={{ borderColor: "var(--accent)", background: "#2a1e10", cursor: "pointer" }}
-        onClick={enable}
-        role="button"
+        style={{ borderColor: "var(--accent)", background: "#2a1e10" }}
       >
         <h2 style={{ margin: 0 }}>🔔 Enable push notifications</h2>
         <p className="small" style={{ margin: "0.5rem 0" }}>
@@ -213,6 +242,14 @@ export function NotificationGate() {
             ? "Tap to allow notifications so you get pinged when someone raises the flag."
             : "Almost there — tap to finish enabling push notifications."}
         </p>
+        {enableError && (
+          <p
+            className="small"
+            style={{ margin: "0.5rem 0", color: "var(--danger)", wordBreak: "break-word" }}
+          >
+            ⚠️ {enableError}
+          </p>
+        )}
         <button className="primary" disabled={busy} onClick={enable}>
           {busy ? "Enabling..." : "Enable notifications"}
         </button>
