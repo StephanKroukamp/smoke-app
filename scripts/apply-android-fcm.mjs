@@ -50,6 +50,15 @@ function patchAppGradle() {
   writeFileSync(appGradle, text);
 }
 
+function bumpMinSdk() {
+  // Firebase Auth 23.x requires minSdk 23; Capacitor defaults to 22.
+  const path = "android/variables.gradle";
+  let text = readFileSync(path, "utf8");
+  text = text.replace(/minSdkVersion\s*=\s*\d+/, "minSdkVersion = 23");
+  writeFileSync(path, text);
+}
+
 patchRootGradle();
 patchAppGradle();
+bumpMinSdk();
 console.log("Patched Android gradle for FCM.");
